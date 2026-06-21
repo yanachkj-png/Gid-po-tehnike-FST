@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -14,6 +15,10 @@ if not TOKEN:
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+user_last_msg = {}
+spam_lock = asyncio.Lock()
+SPAM_INTERVAL = 2.0
 
 class Navigation(StatesGroup):
     main = State()
@@ -180,6 +185,36 @@ async def cmd_start(message: types.Message, state: FSMContext):
         reply_markup=main_menu_kb()
     )
     await state.update_data(message_ids=[msg.message_id])
+
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    await message.answer(
+        "📖 Доступные команды:\n"
+        "/start - Главное меню\n"
+        "/help - Эта справка\n\n"
+        "Используйте кнопки для навигации по разделам."
+    )
+
+@dp.message()
+async def handle_text(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    current_time = time.time()
+    async with spam_lock:
+        last_time = user_last_msg.get(user_id, 0)
+        if current_time - last_time < SPAM_INTERVAL:
+            await message.answer(
+                "⏳ Пожалуйста, не отправляйте сообщения так часто. Подождите немного и попробуйте снова.\n"
+                "Используйте кнопки для навигации."
+            )
+            return
+        user_last_msg[user_id] = current_time
+
+    await message.answer(
+        "⚠️ Пожалуйста, используйте кнопки для навигации.\n"
+        "Если вы потерялись, нажмите /start для возврата в главное меню.",
+        reply_markup=back_to_main_kb()
+    )
+    await state.set_state(Navigation.main)
 
 @dp.callback_query(lambda c: c.data in ["kit", "radio", "camera", "main_menu"])
 async def main_menu_callback(callback: types.CallbackQuery, state: FSMContext):
