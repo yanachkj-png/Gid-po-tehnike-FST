@@ -2,8 +2,8 @@ import asyncio
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiohttp import web
 
-# Берём токен из переменной окружения BOT_TOKEN
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("Переменная BOT_TOKEN не установлена!")
@@ -12,14 +12,31 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 @dp.message(Command("start"))
-async def start_command(message: types.Message):
+async def start(message: types.Message):
     await message.answer("Привет! Я бот-помощник по технике ФСТмедиа.")
 
+async def handle(request):
+    return web.Response(text="I'm alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host='0.0.0.0', port=8080)
+    await site.start()
+    print("Веб-сервер запущен на порту 8080")
+    # Бесконечно держим сервер
+    await asyncio.Event().wait()
+
 async def main():
-    # Удаляем вебхук (на случай, если был установлен)
     await bot.delete_webhook()
     print("Бот запущен!")
-    await dp.start_polling(bot)
+    # Запускаем бота и веб-сервер одновременно
+    await asyncio.gather(
+        dp.start_polling(bot),
+        start_web_server()
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
