@@ -78,15 +78,18 @@ async def send_step_message(target, text, file_ids, kb):
         ids = [text_msg.message_id] + [m.message_id for m in album_msgs]
         return ids
 
-async def clear_and_go(state: FSMContext, chat_id: int):
+async def clear_and_go(state: FSMContext, chat_id: int, extra_id: int = None):
     data = await state.get_data()
     mids = data.get("message_ids", [])
+    if extra_id and extra_id not in mids:
+        mids.append(extra_id)
     for mid in mids:
         try:
             await bot.delete_message(chat_id, mid)
         except Exception:
             pass
     await state.update_data(message_ids=[])
+    await asyncio.sleep(0.2)
 
 kit_steps = [
     ("Как должен выглядеть комплект для репортажной съемки (с рук):",
@@ -218,7 +221,7 @@ async def handle_text(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data in ["kit", "radio", "camera", "main_menu"])
 async def main_menu_callback(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     data = callback.data
     if data == "main_menu":
         await state.set_state(Navigation.main)
@@ -288,14 +291,14 @@ async def kit_navigation(callback: types.CallbackQuery, state: FSMContext):
     has_back = step > 0
     has_next = step < len(kit_steps) - 1
     kb = nav_kb(has_back, has_next)
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
     await state.update_data(message_ids=ids)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "radio_use_prompt", StateFilter(Navigation.radio_menu))
 async def radio_use_prompt(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.radio_use_prompt)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Прочитать «Что в комплекте с радиосистемой?»", callback_data="goto_radio_complete")],
@@ -311,7 +314,7 @@ async def radio_use_prompt(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data in ["goto_radio_complete", "goto_radio_use"])
 async def radio_goto_handlers(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     if callback.data == "goto_radio_complete":
         await state.set_state(Navigation.radio_complete)
         await state.update_data(step=0)
@@ -328,7 +331,7 @@ async def radio_goto_handlers(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data == "radio_where")
 async def radio_where_handler(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.radio_where)
     text, file_ids = radio_where_step
     kb = back_to_main_kb()
@@ -338,7 +341,7 @@ async def radio_where_handler(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data == "radio_complete", StateFilter(Navigation.radio_menu))
 async def radio_complete_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.radio_complete)
     await state.update_data(step=0)
     step_data = radio_complete_steps[0]
@@ -363,7 +366,7 @@ async def radio_complete_nav(callback: types.CallbackQuery, state: FSMContext):
     has_back = step > 0
     has_next = step < len(radio_complete_steps) - 1
     kb = nav_kb(has_back, has_next)
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
     await state.update_data(message_ids=ids)
     await callback.answer()
@@ -387,14 +390,14 @@ async def radio_use_nav(callback: types.CallbackQuery, state: FSMContext):
     if step == len(radio_use_steps) - 1:
         extra = [("📌 Где она находится?", "radio_where")]
     kb = nav_kb(has_back, has_next, extra)
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
     await state.update_data(message_ids=ids)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "camera_complete", StateFilter(Navigation.camera_menu))
 async def camera_complete_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.camera_complete)
     await state.update_data(step=0)
     step_data = camera_complete_steps[0]
@@ -426,14 +429,14 @@ async def camera_complete_nav(callback: types.CallbackQuery, state: FSMContext):
     elif step == 3 or step == 4:
         extra = [("**Как использовать штатив**", "goto_camera_tripod")]
     kb = nav_kb(has_back, has_next, extra)
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
     await state.update_data(message_ids=ids)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "camera_sd", StateFilter(Navigation.camera_menu))
 async def camera_sd_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.camera_sd)
     await state.update_data(step=0)
     step_data = sd_step[0]
@@ -448,7 +451,7 @@ async def camera_sd_start(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data == "camera_battery", StateFilter(Navigation.camera_menu))
 async def camera_battery_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.camera_battery)
     await state.update_data(step=0)
     step_data = camera_battery_steps[0]
@@ -459,7 +462,7 @@ async def camera_battery_start(callback: types.CallbackQuery, state: FSMContext)
 
 @dp.callback_query(lambda c: c.data == "camera_tripod", StateFilter(Navigation.camera_menu))
 async def camera_tripod_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.camera_tripod)
     await state.update_data(step=0)
     step_data = camera_tripod_steps[0]
@@ -470,7 +473,7 @@ async def camera_tripod_start(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data in ["goto_camera_battery", "goto_camera_sd", "goto_camera_tripod"])
 async def camera_goto_handlers(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     target = callback.data
     if target == "goto_camera_battery":
         await state.set_state(Navigation.camera_battery)
@@ -497,7 +500,7 @@ async def camera_goto_handlers(callback: types.CallbackQuery, state: FSMContext)
 
 @dp.callback_query(lambda c: c.data == "nav_back", StateFilter(Navigation.camera_sd))
 async def camera_sd_back(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.camera_menu)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Что в комплекте с камерой?", callback_data="camera_complete")],
@@ -516,7 +519,7 @@ async def camera_sd_back(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data == "camera_sd_tip", StateFilter(Navigation.camera_sd))
 async def camera_sd_tip(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     await state.set_state(Navigation.camera_sd_tip)
     tip_text = (
         "Совет: Перед съемкой отформатируй карту памяти. Включи камеру и нажми кнопку MENU. Затем открой раздел Настройка (Setup) → Форматировать (Format) → выбери карту памяти и подтверди форматирование. После завершения карта будет полностью очищена и готова к записи. Ту же операцию проделай после съемки, когда выгрузишь все файлы. Это очищает карту и подготавливает её к следующей съемке.\n\n"
@@ -543,7 +546,7 @@ async def camera_battery_nav(callback: types.CallbackQuery, state: FSMContext):
     has_back = step > 0
     has_next = step < len(camera_battery_steps) - 1
     kb = nav_kb(has_back, has_next)
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
     await state.update_data(message_ids=ids)
     await callback.answer()
@@ -564,7 +567,7 @@ async def camera_tripod_nav(callback: types.CallbackQuery, state: FSMContext):
     has_back = step > 0
     has_next = step < len(camera_tripod_steps) - 1
     kb = nav_kb(has_back, has_next)
-    await clear_and_go(state, callback.message.chat.id)
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
     await state.update_data(message_ids=ids)
     await callback.answer()
