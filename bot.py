@@ -73,12 +73,15 @@ async def send_step_message(target, text, file_ids, kb):
         ids = [text_msg.message_id] + [m.message_id for m in album_msgs]
         return ids
 
-async def safe_delete_messages(chat_id, message_ids):
-    for mid in message_ids:
+async def clear_and_go(state: FSMContext, chat_id: int):
+    data = await state.get_data()
+    mids = data.get("message_ids", [])
+    for mid in mids:
         try:
             await bot.delete_message(chat_id, mid)
         except Exception:
             pass
+    await state.update_data(message_ids=[])
 
 kit_steps = [
     ("Как должен выглядеть комплект для репортажной съемки (с рук):",
@@ -172,16 +175,11 @@ radio_where_step = ("Радиосистема находится в 309 каби
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.set_state(Navigation.main)
     await state.update_data(message_ids=[])
-    await message.answer(
+    msg = await message.answer(
         "Привет! Я бот-помощник по технике ФСТмедиа.\nО чем хочешь узнать?",
         reply_markup=main_menu_kb()
     )
-
-async def clear_and_go(state: FSMContext, chat_id: int):
-    data = await state.get_data()
-    mids = data.get("message_ids", [])
-    await safe_delete_messages(chat_id, mids)
-    await state.update_data(message_ids=[])
+    await state.update_data(message_ids=[msg.message_id])
 
 @dp.callback_query(lambda c: c.data in ["kit", "radio", "camera", "main_menu"])
 async def main_menu_callback(callback: types.CallbackQuery, state: FSMContext):
@@ -189,10 +187,11 @@ async def main_menu_callback(callback: types.CallbackQuery, state: FSMContext):
     data = callback.data
     if data == "main_menu":
         await state.set_state(Navigation.main)
-        await callback.message.answer(
+        msg = await callback.message.answer(
             "О чем хочешь узнать?",
             reply_markup=main_menu_kb()
         )
+        await state.update_data(message_ids=[msg.message_id])
         await callback.answer()
         return
     if data == "kit":
