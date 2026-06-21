@@ -11,10 +11,17 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
+# ========== ТВОЙ FILE_ID ЛОГОТИПА ==========
+LOGO_FILE_ID = "AgACAgIAAxkBAAFNBplqN8VvZLkaWXDfOznvXkNeVuYWQwACDRxrG0hTwUkOU8rWo25r5gEAAwIAA3kAAzwE"
+
 @dp.message(Command("start"))
 async def start(message: types.Message):
+    # Приветственное сообщение
     await message.answer("Привет! Я бот-помощник по технике ФСТмедиа.")
+    # Логотип отдельным сообщением
+    await message.answer_photo(photo=LOGO_FILE_ID)
 
+# ========== Веб-сервер для Render ==========
 async def handle(request):
     return web.Response(text="I'm alive!")
 
