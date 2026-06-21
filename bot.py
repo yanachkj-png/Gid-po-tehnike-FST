@@ -23,16 +23,15 @@ async def start_web_server():
     app.router.add_get('/', handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host='0.0.0.0', port=8080)
+    port = int(os.getenv("PORT", "8080"))
+    site = web.TCPSite(runner, host='0.0.0.0', port=port)
     await site.start()
-    print("Веб-сервер запущен на порту 8080")
-    # Бесконечно держим сервер
+    print(f"Веб-сервер запущен на порту {port}")
     await asyncio.Event().wait()
 
 async def main():
     await bot.delete_webhook()
     print("Бот запущен!")
-    # Запускаем бота и веб-сервер одновременно
     await asyncio.gather(
         dp.start_polling(bot),
         start_web_server()
