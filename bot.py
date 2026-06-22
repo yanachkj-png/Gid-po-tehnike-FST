@@ -35,26 +35,28 @@ class Navigation(StatesGroup):
     camera_battery = State()
     camera_tripod = State()
 
-def main_menu_kb():
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Съёмочный комплект ФСТмедиа", callback_data="kit")
-    builder.button(text="Радиосистемы", callback_data="radio")
-    builder.button(text="Камеры", callback_data="camera")
-    builder.adjust(1)
-    return builder.as_markup()
-
-def back_to_main_kb():
+def build_main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+        [InlineKeyboardButton(text="Съёмочный комплект ФСТмедиа", callback_data="section:kit")],
+        [InlineKeyboardButton(text="Радиосистемы", callback_data="section:radio")],
+        [InlineKeyboardButton(text="Камеры", callback_data="section:camera")]
     ])
 
-def nav_kb(has_back, has_next, extra_buttons=None, menu_callback=None):
+def build_section_menu(items, back_callback="nav:main_menu"):
+    kb = InlineKeyboardBuilder()
+    for text, cb in items:
+        kb.button(text=text, callback_data=cb)
+    kb.button(text="🔙 Назад", callback_data=back_callback)
+    kb.adjust(1)
+    return kb.as_markup()
+
+def build_nav_keyboard(has_back, has_next, extra_buttons=None, menu_callback=None):
     builder = InlineKeyboardBuilder()
     row = []
     if has_back:
-        row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back"))
+        row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="nav:back"))
     if has_next:
-        row.append(InlineKeyboardButton(text="Далее ➡️", callback_data="nav_next"))
+        row.append(InlineKeyboardButton(text="Далее ➡️", callback_data="nav:next"))
     if row:
         builder.row(*row)
     if extra_buttons:
@@ -62,9 +64,12 @@ def nav_kb(has_back, has_next, extra_buttons=None, menu_callback=None):
             builder.button(text=text, callback_data=cb)
     if menu_callback:
         builder.button(text="В меню раздела", callback_data=menu_callback)
-    builder.button(text="🔙 К разделам", callback_data="main_menu")
+    builder.button(text="🔙 К разделам", callback_data="nav:main_menu")
     builder.adjust(2, 1, 1, 1)
     return builder.as_markup()
+
+def build_simple_menu(buttons):
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t, callback_data=c) for t, c in buttons]])
 
 async def send_step_message(target, text, file_ids, kb):
     if not file_ids:
@@ -187,7 +192,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await state.update_data(message_ids=[])
     msg = await message.answer(
         "Привет! Я бот-помощник по технике ФСТмедиа.\nО чем хочешь узнать?",
-        reply_markup=main_menu_kb()
+        reply_markup=build_main_menu()
     )
     await state.update_data(message_ids=[msg.message_id])
 
@@ -214,406 +219,299 @@ async def handle_text(message: types.Message, state: FSMContext):
             return
         user_last_msg[user_id] = current_time
 
-    await message.answer(
-        "⚠️ Пожалуйста, используйте кнопки для навигации.\n"
-        "Если вы потерялись, нажмите /start для возврата в главное меню.",
-        reply_markup=back_to_main_kb()
+    help_text = (
+        "⚠️ Для навигации используйте кнопки под сообщениями.\n\n"
+        "📌 Доступные команды:\n"
+        "/start – перейти в главное меню\n"
+        "/help – показать эту справку\n\n"
+        "Если вы потерялись, нажмите кнопку ниже, чтобы вернуться в главное меню."
     )
-    await state.set_state(Navigation.main)
+    await message.answer(
+        help_text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="nav:main_menu")]
+        ])
+    )
 
-@dp.callback_query(lambda c: c.data in ["kit", "radio", "camera", "main_menu"])
-async def main_menu_callback(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    data = callback.data
-    if data == "main_menu":
+@dp.callback_query(lambda c: c.data.startswith("nav:"))
+async def nav_callback(callback: types.CallbackQuery, state: FSMContext):
+    action = callback.data.split(":", 1)[1]
+    if action == "main_menu":
+        await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
         await state.set_state(Navigation.main)
         msg = await callback.message.answer(
             "О чем хочешь узнать?",
-            reply_markup=main_menu_kb()
+            reply_markup=build_main_menu()
         )
         await state.update_data(message_ids=[msg.message_id])
         await callback.answer()
         return
-    if data == "kit":
+    elif action == "back":
+        data = await state.get_data()
+        step = data.get("step", 0)
+        if step > 0:
+            await state.update_data(step=step - 1)
+            step_data = data.get("steps")[step - 1] if "steps" in data else None
+            if step_data:
+                kb = build_nav_keyboard(step - 1 > 0, True, menu_callback=data.get("menu_callback"))
+                await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
+                ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+                await state.update_data(message_ids=ids)
+                await callback.answer()
+                return
+        await callback.answer("Нет предыдущего шага")
+        return
+    elif action == "next":
+        data = await state.get_data()
+        step = data.get("step", 0)
+        steps = data.get("steps", [])
+        if step + 1 < len(steps):
+            await state.update_data(step=step + 1)
+            step_data = steps[step + 1]
+            kb = build_nav_keyboard(True, step + 1 < len(steps) - 1, menu_callback=data.get("menu_callback"))
+            await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
+            ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+            await state.update_data(message_ids=ids)
+            await callback.answer()
+            return
+        await callback.answer("Это последний шаг")
+        return
+    elif action == "back_to_radio_menu":
+        await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
+        await state.set_state(Navigation.radio_menu)
+        items = [
+            ("Как её использовать?", "action:radio_use_prompt"),
+            ("Где она находится?", "action:radio_where"),
+            ("Что у нее в комплекте?", "action:radio_complete")
+        ]
+        msg = await callback.message.answer(
+            "**Выбран раздел Радиосистема**. Выбери что хочешь узнать",
+            reply_markup=build_section_menu(items, back_callback="nav:main_menu"),
+            parse_mode="Markdown"
+        )
+        await state.update_data(message_ids=[msg.message_id])
+        await callback.answer()
+        return
+    elif action == "back_to_camera_menu":
+        await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
+        await state.set_state(Navigation.camera_menu)
+        items = [
+            ("Что в комплекте с камерой?", "action:camera_complete"),
+            ("Как использовать карту памяти?", "action:camera_sd"),
+            ("Об аккумуляторе камеры", "action:camera_battery"),
+            ("Как использовать штатив", "action:camera_tripod")
+        ]
+        msg = await callback.message.answer(
+            "**Выбран раздел Камеры**. Выбери что хочешь узнать",
+            reply_markup=build_section_menu(items, back_callback="nav:main_menu"),
+            parse_mode="Markdown"
+        )
+        await state.update_data(message_ids=[msg.message_id])
+        await callback.answer()
+        return
+    else:
+        await callback.answer("Неизвестная команда", show_alert=True)
+
+@dp.callback_query(lambda c: c.data.startswith("section:"))
+async def section_callback(callback: types.CallbackQuery, state: FSMContext):
+    section = callback.data.split(":", 1)[1]
+    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
+    if section == "kit":
         await state.set_state(Navigation.kit)
-        await state.update_data(step=0)
+        await state.update_data(step=0, steps=kit_steps, menu_callback=None)
         step_data = kit_steps[0]
-        kb = nav_kb(has_back=False, has_next=True)
+        kb = build_nav_keyboard(has_back=False, has_next=True)
         ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
         await state.update_data(message_ids=ids)
         await callback.answer()
         return
-    if data == "radio":
+    elif section == "radio":
         await state.set_state(Navigation.radio_menu)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Как её использовать?", callback_data="radio_use_prompt")],
-            [InlineKeyboardButton(text="Где она находится?", callback_data="radio_where")],
-            [InlineKeyboardButton(text="Что у нее в комплекте?", callback_data="radio_complete")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
-        ])
+        items = [
+            ("Как её использовать?", "action:radio_use_prompt"),
+            ("Где она находится?", "action:radio_where"),
+            ("Что у нее в комплекте?", "action:radio_complete")
+        ]
         msg = await callback.message.answer(
             "**Выбран раздел Радиосистема**. Выбери что хочешь узнать",
-            reply_markup=kb,
+            reply_markup=build_section_menu(items, back_callback="nav:main_menu"),
             parse_mode="Markdown"
         )
         await state.update_data(message_ids=[msg.message_id])
         await callback.answer()
         return
-    if data == "camera":
+    elif section == "camera":
         await state.set_state(Navigation.camera_menu)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Что в комплекте с камерой?", callback_data="camera_complete")],
-            [InlineKeyboardButton(text="Как использовать карту памяти?", callback_data="camera_sd")],
-            [InlineKeyboardButton(text="Об аккумуляторе камеры", callback_data="camera_battery")],
-            [InlineKeyboardButton(text="Как использовать штатив", callback_data="camera_tripod")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
-        ])
+        items = [
+            ("Что в комплекте с камерой?", "action:camera_complete"),
+            ("Как использовать карту памяти?", "action:camera_sd"),
+            ("Об аккумуляторе камеры", "action:camera_battery"),
+            ("Как использовать штатив", "action:camera_tripod")
+        ]
         msg = await callback.message.answer(
             "**Выбран раздел Камеры**. Выбери что хочешь узнать",
-            reply_markup=kb,
+            reply_markup=build_section_menu(items, back_callback="nav:main_menu"),
             parse_mode="Markdown"
         )
         await state.update_data(message_ids=[msg.message_id])
         await callback.answer()
         return
-
-@dp.callback_query(lambda c: c.data in ["nav_next", "nav_back"], StateFilter(Navigation.kit))
-async def kit_navigation(callback: types.CallbackQuery, state: FSMContext):
-    data = callback.data
-    step = (await state.get_data()).get("step", 0)
-    if data == "nav_next":
-        step += 1
-    elif data == "nav_back":
-        step -= 1
-    if step < 0 or step >= len(kit_steps):
-        await callback.answer("Нет больше сообщений")
-        return
-    await state.update_data(step=step)
-    step_data = kit_steps[step]
-    has_back = step > 0
-    has_next = step < len(kit_steps) - 1
-    kb = nav_kb(has_back, has_next)
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "radio_use_prompt", StateFilter(Navigation.radio_menu))
-async def radio_use_prompt(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.radio_use_prompt)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Прочитать «Что в комплекте с радиосистемой?»", callback_data="goto_radio_complete")],
-        [InlineKeyboardButton(text="Я прочитал(а)", callback_data="goto_radio_use")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
-    ])
-    msg = await callback.message.answer(
-        "Рекомендуем прочитать раздел «Что в комплекте с радиосистемой?»",
-        reply_markup=kb
-    )
-    await state.update_data(message_ids=[msg.message_id])
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data in ["goto_radio_complete", "goto_radio_use"])
-async def radio_goto_handlers(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    if callback.data == "goto_radio_complete":
-        await state.set_state(Navigation.radio_complete)
-        await state.update_data(step=0)
-        step_data = radio_complete_steps[0]
-        kb = nav_kb(has_back=False, has_next=True, menu_callback="back_to_radio_menu")
     else:
-        await state.set_state(Navigation.radio_use)
-        await state.update_data(step=0)
-        step_data = radio_use_steps[0]
-        kb = nav_kb(has_back=False, has_next=True, menu_callback="back_to_radio_menu")
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
+        await callback.answer("Раздел не найден", show_alert=True)
 
-@dp.callback_query(lambda c: c.data == "radio_where")
-async def radio_where_handler(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(lambda c: c.data.startswith("action:"))
+async def action_callback(callback: types.CallbackQuery, state: FSMContext):
+    action = callback.data.split(":", 1)[1]
     await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.radio_where)
-    text, file_ids = radio_where_step
-    kb = back_to_main_kb()
-    ids = await send_step_message(callback.message, text, file_ids, kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "radio_complete", StateFilter(Navigation.radio_menu))
-async def radio_complete_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.radio_complete)
-    await state.update_data(step=0)
-    step_data = radio_complete_steps[0]
-    kb = nav_kb(has_back=False, has_next=True, menu_callback="back_to_radio_menu")
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data in ["nav_next", "nav_back"], StateFilter(Navigation.radio_complete))
-async def radio_complete_nav(callback: types.CallbackQuery, state: FSMContext):
-    data = callback.data
-    step = (await state.get_data()).get("step", 0)
-    if data == "nav_next":
-        step += 1
-    elif data == "nav_back":
-        step -= 1
-    if step < 0 or step >= len(radio_complete_steps):
-        await callback.answer("Нет больше сообщений")
+    if action == "radio_use_prompt":
+        await state.set_state(Navigation.radio_use_prompt)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Прочитать «Что в комплекте с радиосистемой?»", callback_data="goto:radio_complete")],
+            [InlineKeyboardButton(text="Я прочитал(а)", callback_data="goto:radio_use")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="nav:main_menu")]
+        ])
+        msg = await callback.message.answer(
+            "Рекомендуем прочитать раздел «Что в комплекте с радиосистемой?»",
+            reply_markup=kb
+        )
+        await state.update_data(message_ids=[msg.message_id])
+        await callback.answer()
         return
-    await state.update_data(step=step)
-    step_data = radio_complete_steps[step]
-    has_back = step > 0
-    has_next = step < len(radio_complete_steps) - 1
-    kb = nav_kb(has_back, has_next, menu_callback="back_to_radio_menu")
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data in ["nav_next", "nav_back"], StateFilter(Navigation.radio_use))
-async def radio_use_nav(callback: types.CallbackQuery, state: FSMContext):
-    data = callback.data
-    step = (await state.get_data()).get("step", 0)
-    if data == "nav_next":
-        step += 1
-    elif data == "nav_back":
-        step -= 1
-    if step < 0 or step >= len(radio_use_steps):
-        await callback.answer("Нет больше сообщений")
+    elif action == "radio_where":
+        await state.set_state(Navigation.radio_where)
+        text, file_ids = radio_where_step
+        kb = build_simple_menu([("🔙 Назад", "nav:main_menu")])
+        ids = await send_step_message(callback.message, text, file_ids, kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
         return
-    await state.update_data(step=step)
-    step_data = radio_use_steps[step]
-    has_back = step > 0
-    has_next = step < len(radio_use_steps) - 1
-    extra = []
-    if step == len(radio_use_steps) - 1:
-        extra = [("📌 Где она находится?", "radio_where")]
-    kb = nav_kb(has_back, has_next, extra_buttons=extra, menu_callback="back_to_radio_menu")
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "back_to_radio_menu")
-async def back_to_radio_menu(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.radio_menu)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Как её использовать?", callback_data="radio_use_prompt")],
-        [InlineKeyboardButton(text="Где она находится?", callback_data="radio_where")],
-        [InlineKeyboardButton(text="Что у нее в комплекте?", callback_data="radio_complete")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
-    ])
-    msg = await callback.message.answer(
-        "**Выбран раздел Радиосистема**. Выбери что хочешь узнать",
-        reply_markup=kb,
-        parse_mode="Markdown"
-    )
-    await state.update_data(message_ids=[msg.message_id])
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "camera_complete", StateFilter(Navigation.camera_menu))
-async def camera_complete_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.camera_complete)
-    await state.update_data(step=0)
-    step_data = camera_complete_steps[0]
-    kb = nav_kb(has_back=False, has_next=True, menu_callback="back_to_camera_menu")
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data in ["nav_next", "nav_back"], StateFilter(Navigation.camera_complete))
-async def camera_complete_nav(callback: types.CallbackQuery, state: FSMContext):
-    data = callback.data
-    step = (await state.get_data()).get("step", 0)
-    if data == "nav_next":
-        step += 1
-    elif data == "nav_back":
-        step -= 1
-    if step < 0 or step >= len(camera_complete_steps):
-        await callback.answer("Нет больше сообщений")
+    elif action == "radio_complete":
+        await state.set_state(Navigation.radio_complete)
+        await state.update_data(step=0, steps=radio_complete_steps, menu_callback="nav:back_to_radio_menu")
+        step_data = radio_complete_steps[0]
+        kb = build_nav_keyboard(has_back=False, has_next=True, menu_callback="nav:back_to_radio_menu")
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
         return
-    await state.update_data(step=step)
-    step_data = camera_complete_steps[step]
-    has_back = step > 0
-    has_next = step < len(camera_complete_steps) - 1
-    extra = []
-    if step == 1:
-        extra = [("Как вставлять аккумулятор", "goto_camera_battery")]
-    elif step == 2:
-        extra = [("Как вставлять SD-карту", "goto_camera_sd")]
-    elif step == 3 or step == 4:
-        extra = [("Как использовать штатив", "goto_camera_tripod")]
-    kb = nav_kb(has_back, has_next, extra_buttons=extra, menu_callback="back_to_camera_menu")
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "camera_sd", StateFilter(Navigation.camera_menu))
-async def camera_sd_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.camera_sd)
-    await state.update_data(step=0)
-    step_data = sd_step[0]
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back")],
-        [InlineKeyboardButton(text="Совет", callback_data="camera_sd_tip")],
-        [InlineKeyboardButton(text="В меню раздела", callback_data="back_to_camera_menu")],
-        [InlineKeyboardButton(text="🔙 К разделам", callback_data="main_menu")]
-    ])
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "camera_battery", StateFilter(Navigation.camera_menu))
-async def camera_battery_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.camera_battery)
-    await state.update_data(step=0)
-    step_data = camera_battery_steps[0]
-    kb = nav_kb(has_back=False, has_next=True, menu_callback="back_to_camera_menu")
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "camera_tripod", StateFilter(Navigation.camera_menu))
-async def camera_tripod_start(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.camera_tripod)
-    await state.update_data(step=0)
-    step_data = camera_tripod_steps[0]
-    kb = nav_kb(has_back=False, has_next=True, menu_callback="back_to_camera_menu")
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data in ["goto_camera_battery", "goto_camera_sd", "goto_camera_tripod"])
-async def camera_goto_handlers(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    target = callback.data
-    if target == "goto_camera_battery":
-        await state.set_state(Navigation.camera_battery)
-        await state.update_data(step=0)
-        step_data = camera_battery_steps[0]
-        kb = nav_kb(has_back=False, has_next=True, menu_callback="back_to_camera_menu")
-    elif target == "goto_camera_sd":
+    elif action == "camera_complete":
+        await state.set_state(Navigation.camera_complete)
+        await state.update_data(step=0, steps=camera_complete_steps, menu_callback="nav:back_to_camera_menu")
+        step_data = camera_complete_steps[0]
+        kb = build_nav_keyboard(has_back=False, has_next=True, menu_callback="nav:back_to_camera_menu")
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
+        return
+    elif action == "camera_sd":
         await state.set_state(Navigation.camera_sd)
-        await state.update_data(step=0)
+        await state.update_data(step=0, steps=sd_step, menu_callback="nav:back_to_camera_menu")
         step_data = sd_step[0]
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="nav_back")],
-            [InlineKeyboardButton(text="Совет", callback_data="camera_sd_tip")],
-            [InlineKeyboardButton(text="В меню раздела", callback_data="back_to_camera_menu")],
-            [InlineKeyboardButton(text="🔙 К разделам", callback_data="main_menu")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="nav:back")],
+            [InlineKeyboardButton(text="Совет", callback_data="action:camera_sd_tip")],
+            [InlineKeyboardButton(text="В меню раздела", callback_data="nav:back_to_camera_menu")],
+            [InlineKeyboardButton(text="🔙 К разделам", callback_data="nav:main_menu")]
         ])
-    else:
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
+        return
+    elif action == "camera_battery":
+        await state.set_state(Navigation.camera_battery)
+        await state.update_data(step=0, steps=camera_battery_steps, menu_callback="nav:back_to_camera_menu")
+        step_data = camera_battery_steps[0]
+        kb = build_nav_keyboard(has_back=False, has_next=True, menu_callback="nav:back_to_camera_menu")
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
+        return
+    elif action == "camera_tripod":
         await state.set_state(Navigation.camera_tripod)
-        await state.update_data(step=0)
+        await state.update_data(step=0, steps=camera_tripod_steps, menu_callback="nav:back_to_camera_menu")
         step_data = camera_tripod_steps[0]
-        kb = nav_kb(has_back=False, has_next=True, menu_callback="back_to_camera_menu")
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "nav_back", StateFilter(Navigation.camera_sd))
-async def camera_sd_back(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.camera_menu)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Что в комплекте с камерой?", callback_data="camera_complete")],
-        [InlineKeyboardButton(text="Как использовать карту памяти?", callback_data="camera_sd")],
-        [InlineKeyboardButton(text="Об аккумуляторе камеры", callback_data="camera_battery")],
-        [InlineKeyboardButton(text="Как использовать штатив", callback_data="camera_tripod")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
-    ])
-    msg = await callback.message.answer(
-        "**Выбран раздел Камеры**. Выбери что хочешь узнать",
-        reply_markup=kb,
-        parse_mode="Markdown"
-    )
-    await state.update_data(message_ids=[msg.message_id])
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "camera_sd_tip", StateFilter(Navigation.camera_sd))
-async def camera_sd_tip(callback: types.CallbackQuery, state: FSMContext):
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.camera_sd_tip)
-    tip_text = (
-        "Совет: Перед съемкой отформатируй карту памяти. Включи камеру и нажми кнопку MENU. Затем открой раздел Настройка (Setup) → Форматировать (Format) → выбери карту памяти и подтверди форматирование. После завершения карта будет полностью очищена и готова к записи.\n\n"
-        "_⚠️ Перед форматированием убедись, что все нужные фото и видео сохранены в другом месте. Форматирование удалит все данные с карты памяти без возможности восстановления через камеру._"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="В меню раздела", callback_data="back_to_camera_menu"),
-         InlineKeyboardButton(text="🔙 К разделам", callback_data="main_menu")]
-    ])
-    msg = await callback.message.answer(tip_text, reply_markup=kb, parse_mode="Markdown")
-    await state.update_data(message_ids=[msg.message_id])
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data in ["nav_next", "nav_back"], StateFilter(Navigation.camera_battery))
-async def camera_battery_nav(callback: types.CallbackQuery, state: FSMContext):
-    data = callback.data
-    step = (await state.get_data()).get("step", 0)
-    if data == "nav_next":
-        step += 1
-    elif data == "nav_back":
-        step -= 1
-    if step < 0 or step >= len(camera_battery_steps):
-        await callback.answer("Нет больше сообщений")
+        kb = build_nav_keyboard(has_back=False, has_next=True, menu_callback="nav:back_to_camera_menu")
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
         return
-    await state.update_data(step=step)
-    step_data = camera_battery_steps[step]
-    has_back = step > 0
-    has_next = step < len(camera_battery_steps) - 1
-    kb = nav_kb(has_back, has_next, menu_callback="back_to_camera_menu")
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data in ["nav_next", "nav_back"], StateFilter(Navigation.camera_tripod))
-async def camera_tripod_nav(callback: types.CallbackQuery, state: FSMContext):
-    data = callback.data
-    step = (await state.get_data()).get("step", 0)
-    if data == "nav_next":
-        step += 1
-    elif data == "nav_back":
-        step -= 1
-    if step < 0 or step >= len(camera_tripod_steps):
-        await callback.answer("Нет больше сообщений")
+    elif action == "camera_sd_tip":
+        await state.set_state(Navigation.camera_sd_tip)
+        tip_text = (
+            "Совет: Перед съемкой отформатируй карту памяти. Включи камеру и нажми кнопку MENU. Затем открой раздел Настройка (Setup) → Форматировать (Format) → выбери карту памяти и подтверди форматирование. После завершения карта будет полностью очищена и готова к записи.\n\n"
+            "_⚠️ Перед форматированием убедись, что все нужные фото и видео сохранены в другом месте. Форматирование удалит все данные с карты памяти без возможности восстановления через камеру._"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="В меню раздела", callback_data="nav:back_to_camera_menu"),
+             InlineKeyboardButton(text="🔙 К разделам", callback_data="nav:main_menu")]
+        ])
+        msg = await callback.message.answer(tip_text, reply_markup=kb, parse_mode="Markdown")
+        await state.update_data(message_ids=[msg.message_id])
+        await callback.answer()
         return
-    await state.update_data(step=step)
-    step_data = camera_tripod_steps[step]
-    has_back = step > 0
-    has_next = step < len(camera_tripod_steps) - 1
-    kb = nav_kb(has_back, has_next, menu_callback="back_to_camera_menu")
-    await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
-    await state.update_data(message_ids=ids)
-    await callback.answer()
+    else:
+        await callback.answer("Действие не найдено", show_alert=True)
 
-@dp.callback_query(lambda c: c.data == "back_to_camera_menu")
-async def back_to_camera_menu(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(lambda c: c.data.startswith("goto:"))
+async def goto_callback(callback: types.CallbackQuery, state: FSMContext):
+    target = callback.data.split(":", 1)[1]
     await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
-    await state.set_state(Navigation.camera_menu)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Что в комплекте с камерой?", callback_data="camera_complete")],
-        [InlineKeyboardButton(text="Как использовать карту памяти?", callback_data="camera_sd")],
-        [InlineKeyboardButton(text="Об аккумуляторе камеры", callback_data="camera_battery")],
-        [InlineKeyboardButton(text="Как использовать штатив", callback_data="camera_tripod")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
-    ])
-    msg = await callback.message.answer(
-        "**Выбран раздел Камеры**. Выбери что хочешь узнать",
-        reply_markup=kb,
-        parse_mode="Markdown"
-    )
-    await state.update_data(message_ids=[msg.message_id])
+    if target == "radio_complete":
+        await state.set_state(Navigation.radio_complete)
+        await state.update_data(step=0, steps=radio_complete_steps, menu_callback="nav:back_to_radio_menu")
+        step_data = radio_complete_steps[0]
+        kb = build_nav_keyboard(has_back=False, has_next=True, menu_callback="nav:back_to_radio_menu")
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
+        return
+    elif target == "radio_use":
+        await state.set_state(Navigation.radio_use)
+        await state.update_data(step=0, steps=radio_use_steps, menu_callback="nav:back_to_radio_menu")
+        step_data = radio_use_steps[0]
+        kb = build_nav_keyboard(has_back=False, has_next=True, menu_callback="nav:back_to_radio_menu")
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
+        return
+    elif target == "camera_battery":
+        await state.set_state(Navigation.camera_battery)
+        await state.update_data(step=0, steps=camera_battery_steps, menu_callback="nav:back_to_camera_menu")
+        step_data = camera_battery_steps[0]
+        kb = build_nav_keyboard(has_back=False, has_next=True, menu_callback="nav:back_to_camera_menu")
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
+        return
+    elif target == "camera_sd":
+        await state.set_state(Navigation.camera_sd)
+        await state.update_data(step=0, steps=sd_step, menu_callback="nav:back_to_camera_menu")
+        step_data = sd_step[0]
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="nav:back")],
+            [InlineKeyboardButton(text="Совет", callback_data="action:camera_sd_tip")],
+            [InlineKeyboardButton(text="В меню раздела", callback_data="nav:back_to_camera_menu")],
+            [InlineKeyboardButton(text="🔙 К разделам", callback_data="nav:main_menu")]
+        ])
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
+        return
+    elif target == "camera_tripod":
+        await state.set_state(Navigation.camera_tripod)
+        await state.update_data(step=0, steps=camera_tripod_steps, menu_callback="nav:back_to_camera_menu")
+        step_data = camera_tripod_steps[0]
+        kb = build_nav_keyboard(has_back=False, has_next=True, menu_callback="nav:back_to_camera_menu")
+        ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
+        await state.update_data(message_ids=ids)
+        await callback.answer()
+        return
+    else:
+        await callback.answer("Переход не найден", show_alert=True)
+
+@dp.callback_query(lambda c: c.data == "nav:back")
+async def back_callback(callback: types.CallbackQuery, state: FSMContext):
+    # этот обработчик нужен для обратной совместимости, но уже обрабатывается в nav_callback
     await callback.answer()
 
 async def handle(request):
