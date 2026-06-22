@@ -130,8 +130,9 @@ radio_complete_steps = [
 
 camera_complete_steps = [
     ("**Sony FDR-AX53**\nКамкордер для репортажной съемки на выезде. Идеально подходит для оперативной съемки с рук",
-     ["AgACAgIAAxkBAAFNFR1qOHSrPZNpjyWE15TtfbD3zyoCjQACUhhrG2TPyEmVB67HMHSR4AEAAwIAA3gAAzwE",
-      "AgACAgIAAxkBAAFNE6xqOFaejzFalVZ2Bw4TMIXYY_sqzQACPh9rG0hTwUlRlaAT7hVsPAEAAwIAA3MAAzwE"]),
+     ["AgACAgIAAxkBAAFNHZZqOSGMKkps_ar1fW6F72JbxVVx2AACsBtrG0hTyUlmJaxO_dMGDgEAAwIAA3kAAzwE",
+      "AgACAgIAAxkBAAFNHZhqOSGVXCdL0RtfMV5RC0ZKq6rsjAACsRtrG0hTyUlE5hSf-mvixAEAAwIAA3kAAzwE"]),
+]
     ("**Аккумуляторы для Sony FDR-AX53**\nРазличаются по ёмкости энергоячеек",
      ["AgACAgIAAxkBAAFNE2JqOFHwmY8WV0-WjzaHJGbWHAwtsgACKB9rG0hTwUn3wVgwfu9MHQEAAwIAA3gAAzwE"]),
     ("**SD карта Kingston 256gb**\nИспользуется для всех камер и съёмок. Хранится в кейсе",
