@@ -1,7 +1,10 @@
 import pytest
 import sys
 import os
+import secrets
 from unittest.mock import AsyncMock, MagicMock, patch
+
+os.environ["BOT_TOKEN"] = secrets.token_urlsafe(32)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
