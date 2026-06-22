@@ -443,11 +443,11 @@ async def camera_complete_nav(callback: types.CallbackQuery, state: FSMContext):
     has_next = step < len(camera_complete_steps) - 1
     extra = []
     if step == 1:
-        extra = [("**Как вставлять аккумулятор**", "goto_camera_battery")]
+        extra = [("Как вставлять аккумулятор", "goto_camera_battery")]
     elif step == 2:
-        extra = [("**Как вставлять SD-карту**", "goto_camera_sd")]
+        extra = [("Как вставлять SD-карту", "goto_camera_sd")]
     elif step == 3 or step == 4:
-        extra = [("**Как использовать штатив**", "goto_camera_tripod")]
+        extra = [("Как использовать штатив", "goto_camera_tripod")]
     kb = nav_kb(has_back, has_next, extra_buttons=extra, menu_callback="back_to_camera_menu")
     await clear_and_go(state, callback.message.chat.id, callback.message.message_id)
     ids = await send_step_message(callback.message, step_data[0], step_data[1], kb)
@@ -547,7 +547,10 @@ async def camera_sd_tip(callback: types.CallbackQuery, state: FSMContext):
         "Совет: Перед съемкой отформатируй карту памяти. Включи камеру и нажми кнопку MENU. Затем открой раздел Настройка (Setup) → Форматировать (Format) → выбери карту памяти и подтверди форматирование. После завершения карта будет полностью очищена и готова к записи.\n\n"
         "_⚠️ Перед форматированием убедись, что все нужные фото и видео сохранены в другом месте. Форматирование удалит все данные с карты памяти без возможности восстановления через камеру._"
     )
-    kb = back_to_main_kb()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="В меню раздела", callback_data="back_to_camera_menu"),
+         InlineKeyboardButton(text="🔙 К разделам", callback_data="main_menu")]
+    ])
     msg = await callback.message.answer(tip_text, reply_markup=kb, parse_mode="Markdown")
     await state.update_data(message_ids=[msg.message_id])
     await callback.answer()
