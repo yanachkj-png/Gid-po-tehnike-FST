@@ -1,6 +1,5 @@
 ## Гид по технике ФСТмедиа (Telegram-бот)
 
-[![Run tests](https://github.com/yanachkj-png/Gid-po-tehnike-FST/actions/workflows/test.yml/badge.svg)](https://github.com/yanachkj-png/Gid-po-tehnike-FST/actions)
 
 Telegram-бот для студенческого СМИ ФСТмедиа. Позволяет оперативно получать инструкции по работе с техникой – камеры, радиосистемы, съёмочный комплект. Вся информация структурирована, сопровождается фотографиями и пошаговыми пояснениями.
 
